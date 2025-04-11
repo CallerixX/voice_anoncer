@@ -185,4 +185,4 @@ MIT License
 Если у вас возникли проблемы или вопросы:
 1. Проверьте раздел "Устранение неполадок"
 2. Создайте issue на GitHub
-3. Напишите на email: your.email@example.com 
+3. Напишите на email: callerin@outlook.com
