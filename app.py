@@ -1,20 +1,26 @@
 import streamlit as st
 import torch
 from TTS.api import TTS
-import soundfile as sf
-import io
+from pydub import AudioSegment
 import os
 import tempfile
 import base64
-import requests
-from pydub import AudioSegment
-import shutil
 import json
 
 # Инициализация TTS
 @st.cache_resource
 def load_tts():
-    return TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+    from TTS.tts.configs.xtts_config import XttsConfig, XttsAudioConfig
+    from TTS.tts.models.xtts import Xtts
+    from TTS.config.shared_configs import BaseDatasetConfig
+    
+    original_load = torch.load
+    torch.load = lambda *args, **kwargs: original_load(*args, **kwargs, weights_only=False)
+    
+    try:
+        return TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+    finally:
+        torch.load = original_load
 
 def convert_audio_format(input_path, output_format):
     audio = AudioSegment.from_wav(input_path)
