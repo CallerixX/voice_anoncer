@@ -6,17 +6,14 @@ import os
 import tempfile
 import base64
 import json
+import time
 
-# Инициализация TTS
+AudioSegment.converter = "C:/ffmpeg/bin/ffmpeg.exe"
+
 @st.cache_resource
 def load_tts():
-    from TTS.tts.configs.xtts_config import XttsConfig, XttsAudioConfig
-    from TTS.tts.models.xtts import Xtts
-    from TTS.config.shared_configs import BaseDatasetConfig
-    
     original_load = torch.load
     torch.load = lambda *args, **kwargs: original_load(*args, **kwargs, weights_only=False)
-    
     try:
         return TTS("tts_models/multilingual/multi-dataset/xtts_v2")
     finally:
@@ -43,20 +40,15 @@ def add_background_sound(voice_path, background_path, output_path, background_vo
     voice = AudioSegment.from_wav(voice_path)
     background = AudioSegment.from_wav(background_path)
     
-    # Нормализуем длину фонового звука под длину голоса
     if len(background) < len(voice):
         background = background * (len(voice) // len(background) + 1)
     background = background[:len(voice)]
     
-    # Уменьшаем громкость фонового звука
     background = background - (20 * (1 - background_volume))
-    
-    # Смешиваем звуки
     combined = voice.overlay(background)
     combined.export(output_path, format="wav")
 
 def load_voices():
-    # Базовый список голосов
     voices = {
         "Мужские": {
             "Александр": "Александр",
@@ -75,7 +67,6 @@ def load_voices():
         }
     }
     
-    # Загружаем дополнительные голоса из файла, если он существует
     if os.path.exists("voices/voices.json"):
         try:
             with open("voices/voices.json", "r", encoding="utf-8") as f:
@@ -90,38 +81,30 @@ def load_voices():
     return voices
 
 def save_voices(voices):
-    # Сохраняем только пользовательские голоса
     user_voices = {
         "Мужские": {},
         "Женские": {}
     }
     
-    # Базовые голоса, которые не нужно сохранять
     base_voices = {
         "Мужские": ["Александр", "Захар", "Итан", "Кирилл", "Томас"],
         "Женские": ["Алена", "Елена", "Катрин", "Мария", "Светлана", "Камила"]
     }
     
-    # Фильтруем пользовательские голоса
     for gender in voices:
         for name, path in voices[gender].items():
             if name not in base_voices[gender]:
                 user_voices[gender][name] = path
     
-    # Сохраняем в файл
     with open("voices/voices.json", "w", encoding="utf-8") as f:
         json.dump(user_voices, f, ensure_ascii=False, indent=4)
 
 def main():
-    st.title("Озвучка текста")
+    st.title("Озвучка текста с настройками голоса")
     
-    # Загрузка модели
     tts = load_tts()
-    
-    # Загрузка списка голосов
     voices = load_voices()
     
-    # Функционал добавления нового голоса
     st.subheader("Добавить новый голос")
     uploaded_file = st.file_uploader("Загрузите аудиофайл", type=['wav', 'mp3', 'ogg', 'm4a'])
     
@@ -133,151 +116,177 @@ def main():
             voice_gender = st.radio("Выберите пол голоса:", ["Мужские", "Женские"], key="voice_gender_upload")
         
         if voice_name and st.button("Добавить голос"):
-            # Создаем временный файл
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_file:
-                temp_file.write(uploaded_file.getvalue())
                 temp_path = temp_file.name
+                temp_file.write(uploaded_file.getvalue())
             
             try:
-                # Конвертируем в WAV
                 output_path = os.path.join("voices", f"{voice_name}.wav")
                 convert_to_wav(temp_path, output_path)
-                
-                # Добавляем голос в список
                 voices[voice_gender][voice_name] = voice_name
-                
-                # Сохраняем обновленный список голосов
                 save_voices(voices)
-                
                 st.success(f"Голос {voice_name} успешно добавлен!")
             except Exception as e:
                 st.error(f"Ошибка при добавлении голоса: {str(e)}")
             finally:
-                # Удаляем временный файл
                 if os.path.exists(temp_path):
-                    os.unlink(temp_path)
+                    try:
+                        os.unlink(temp_path)
+                    except PermissionError:
+                        st.warning("Файл временно заблокирован. Попробуйте еще раз.")
     
     st.divider()
     
-    # Выбор пола голоса
     gender = st.radio("Выберите пол голоса:", ["Мужские", "Женские"], key="voice_gender_select")
-    
-    # Выбор конкретного голоса
     voice_name = st.selectbox("Выберите голос:", list(voices[gender].keys()))
     
-    # Предпрослушка голоса
     if st.button("Предпрослушка голоса"):
         preview_text = f"Привет! Меня зовут {voice_name}, я могу озвучить твой текст."
         with st.spinner("Генерируем предпрослушку..."):
-            # Создаем временный файл для предпрослушки
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_path = temp_file.name
-            
-            try:
-                # Генерируем предпрослушку
-                wav = tts.tts_to_file(
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as preview_file:
+                preview_path = preview_file.name
+                tts.tts_to_file(
                     text=preview_text,
                     speaker_wav=f"voices/{voices[gender][voice_name]}.wav",
                     language="ru",
-                    file_path=temp_path
+                    file_path=preview_path,
+                    speed=1.0,
+                    temperature=0.7
                 )
-                st.audio(temp_path)
-            finally:
-                # Удаляем временный файл
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
+                st.audio(preview_path)
+                time.sleep(1)
+                preview_file.close()
+                try:
+                    os.unlink(preview_path)
+                except PermissionError:
+                    pass
     
-    # Ввод текста для озвучки
-    text = st.text_area("Введите текст для озвучки:", height=200)
-    
-    # Настройки голоса
     st.subheader("Настройки голоса")
     col1, col2 = st.columns(2)
     with col1:
-        speed = st.slider("Скорость речи:", 0.5, 2.0, 1.0, 0.1)
+        speed = st.slider(
+            "Скорость речи:", 
+            0.5, 2.0, 1.0, 0.1,
+            help="Чем выше значение - тем быстрее речь. Оптимальный диапазон: 0.8-1.2"
+        )
     with col2:
-        add_background = st.checkbox("Добавить фоновый звук")
+        temperature = st.slider(
+            "Вариативность:", 
+            0.1, 1.0, 0.7, 0.1,
+            help="Чем выше значение - тем разнообразнее интонации (но возможны артефакты). Рекомендуем 0.5-0.7"
+        )
+    
+    add_background = st.checkbox("Добавить фоновый звук")
+    background_data = None
     
     if add_background:
         background_file = st.file_uploader("Загрузите фоновый звук", type=['wav', 'mp3', 'ogg', 'm4a'])
         if background_file is not None:
-            # Предпрослушка фонового звука
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as bg_temp_file:
                 bg_temp_path = bg_temp_file.name
-                # Сохраняем загруженный файл во временный файл
-                with open(bg_temp_path, 'wb') as f:
-                    f.write(background_file.getvalue())
-                # Конвертируем в WAV
-                convert_to_wav(bg_temp_path, bg_temp_path)
-                st.caption("Предпрослушка фонового звука:")
-                st.audio(bg_temp_path)
-                os.unlink(bg_temp_path)
-        
-        background_volume = st.slider("Громкость фонового звука:", 0.0, 1.0, 0.3, 0.1)
+                bg_temp_file.write(background_file.getvalue())
+                
+            try:
+                converted_bg_path = "background.wav"
+                convert_to_wav(bg_temp_path, converted_bg_path)
+                st.audio(converted_bg_path)
+                background_volume = st.slider(
+                    "Громкость фонового звука:",
+                    0.0, 1.0, 0.3, 0.1,
+                    help="0 - фон отключен, 1 - максимальная громкость"
+                )
+                background_data = (converted_bg_path, background_volume)
+            finally:
+                try:
+                    os.unlink(bg_temp_path)
+                except Exception as e:
+                    st.error(f"Ошибка удаления временного файла: {str(e)}")
     
-    # Кнопка для озвучки
+    text = st.text_area(
+        "Введите текст для озвучки:", 
+        height=200,
+        help="""Советы по форматированию:
+1. Используйте ! для повышения интонации
+2. Ставьте , для коротких пауз
+3. Выделяйте ЗАГЛАВНЫМИ важные слова
+4. Для ударения используйте символ ' перед буквой: напр. 'пример"""
+    )
+    
     if st.button("Озвучить текст") and text:
         with st.spinner("Генерируем аудио..."):
-            # Создаем временный файл для результата
+            processed_text = (
+            text
+            .replace("'", "́")  # Заменяем апостроф на акцент
+            .replace("́ ", "́")  # Убираем пробелы после акцента
+            )
+            
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_path = temp_file.name
-            
-            # Инициализируем пути для разных форматов
-            mp3_path = None
-            ogg_path = None
-            
-            try:
-                # Генерируем аудио
-                wav = tts.tts_to_file(
-                    text=text,
-                    speaker_wav=f"voices/{voices[gender][voice_name]}.wav",
-                    language="ru",
-                    file_path=temp_path
-                )
+                temp_file.close()
                 
-                # Добавляем фоновый звук, если нужно
-                if add_background and background_file is not None:
-                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as bg_temp_file:
-                        bg_temp_path = bg_temp_file.name
-                        # Сохраняем загруженный файл во временный файл
-                        with open(bg_temp_path, 'wb') as f:
-                            f.write(background_file.getvalue())
-                        # Конвертируем в WAV
-                        convert_to_wav(bg_temp_path, bg_temp_path)
-                        # Добавляем фоновый звук
-                        add_background_sound(temp_path, bg_temp_path, temp_path, background_volume)
-                        os.unlink(bg_temp_path)
-                
-                # Воспроизводим аудио
-                st.audio(temp_path)
-                
-                # Предлагаем скачать в разных форматах
-                st.subheader("Скачать аудио")
-                col1, col2, col3 = st.columns(3)
+                mp3_path = None
+                ogg_path = None
+                final_path = temp_path
+                files_to_delete = [temp_path]
                 
                 try:
-                    # Создаем временные файлы для разных форматов
-                    mp3_path = convert_audio_format(temp_path, "mp3")
-                    with col1:
-                        st.markdown(get_binary_file_downloader_html(mp3_path, "MP3"), unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Ошибка при конвертации в MP3: {str(e)}")
+                    tts.tts_to_file(
+                        text=processed_text,
+                        speaker_wav=f"voices/{voices[gender][voice_name]}.wav",
+                        language="ru",
+                        file_path=temp_path,
+                        speed=speed,
+                        temperature=temperature
+                    )
+                    
+                    if add_background and background_data is not None:
+                        bg_path, bg_volume = background_data
+                        final_path = "final_output.wav"
+                        add_background_sound(
+                            temp_path, 
+                            bg_path, 
+                            final_path, 
+                            background_volume=bg_volume
+                        )
+                        files_to_delete.append(final_path)
+                    
+                    st.audio(final_path)
+                    
+                    st.subheader("Скачать в форматах:")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    try:
+                        mp3_path = convert_audio_format(final_path, "mp3")
+                        col1.markdown(get_binary_file_downloader_html(mp3_path, "MP3"), unsafe_allow_html=True)
+                        files_to_delete.append(mp3_path)
+                    except Exception as e:
+                        st.error(f"Ошибка MP3: {str(e)}")
+                    
+                    col2.markdown(get_binary_file_downloader_html(final_path, "WAV"), unsafe_allow_html=True)
+                    
+                    try:
+                        ogg_path = convert_audio_format(final_path, "ogg")
+                        col3.markdown(get_binary_file_downloader_html(ogg_path, "OGG"), unsafe_allow_html=True)
+                        files_to_delete.append(ogg_path)
+                    except Exception as e:
+                        st.error(f"Ошибка OGG: {str(e)}")
+                    
+                    time.sleep(2)
                 
-                with col2:
-                    st.markdown(get_binary_file_downloader_html(temp_path, "WAV"), unsafe_allow_html=True)
-                
-                try:
-                    ogg_path = convert_audio_format(temp_path, "ogg")
-                    with col3:
-                        st.markdown(get_binary_file_downloader_html(ogg_path, "OGG"), unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Ошибка при конвертации в OGG: {str(e)}")
-                
-            finally:
-                # Удаляем временные файлы
-                for path in [p for p in [temp_path, mp3_path, ogg_path] if p is not None]:
-                    if os.path.exists(path):
-                        os.unlink(path)
+                finally:
+                    for path in files_to_delete:
+                        if path and os.path.exists(path):
+                            try:
+                                os.unlink(path)
+                            except Exception as e:
+                                st.error(f"Ошибка удаления файла {path}: {str(e)}")
+                    
+                    if background_data is not None:
+                        try:
+                            os.unlink(background_data[0])
+                        except Exception as e:
+                            st.error(f"Ошибка удаления фонового файла: {str(e)}")
 
 if __name__ == "__main__":
-    main() 
+    os.makedirs("voices", exist_ok=True)
+    main()
